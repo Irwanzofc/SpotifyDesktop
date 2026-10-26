@@ -11,8 +11,12 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -24,6 +28,7 @@ import android.widget.*
 private val BG = Color.parseColor("#121212")
 private val PANEL = Color.parseColor("#1E1E1E")
 private val GREEN = Color.parseColor("#1DB954")
+private const val REFRESH_MS = 45 * 60 * 1000L   // muat ulang sebelum token Spotify (±1 jam) habis
 
 /** WebView yang tidak pernah diberi tahu jendelanya tersembunyi, supaya audio tidak dijeda di latar belakang. */
 class BgWebView(c: Context) : WebView(c) {
@@ -42,13 +47,79 @@ class MainActivity : Activity() {
     private val widths = intArrayOf(768, 1024, 1280)
     private var wi = 0
 
+    // ---- Pemulihan otomatis kalau musik berhenti sendiri ----
+    private val h = Handler(Looper.getMainLooper())
+    private val prefs by lazy { getSharedPreferences("s", MODE_PRIVATE) }
+    private var auto: Boolean
+        get() = prefs.getBoolean("auto", false)
+        set(v) { prefs.edit().putBoolean("auto", v).apply() }
+    private var lastUser = 0L            // terakhir kali Anda menyentuh layar / tombol kontrol
+    private var lastLoad = SystemClock.uptimeMillis()
+    private var wasPlaying = false
+    private var lastTitle = ""
+    private var stopAt = 0L
+    private var resumeAfterLoad = false
+
+    private fun onState(t: String, a: String, art: String, p: Boolean) {
+        NowPlaying.update(this, t, a, art, p)
+        val now = SystemClock.uptimeMillis()
+        var reload = false
+        if (p) {
+            h.removeCallbacksAndMessages(null)
+            NowPlaying.cancelAlert(this)
+            resumeAfterLoad = false
+            // Mode Auto: muat ulang saat pergantian lagu kalau halaman sudah lama (cegah token habis)
+            reload = auto && lastTitle.isNotEmpty() && t != lastTitle && now - lastLoad > REFRESH_MS
+        } else if (wasPlaying && now - lastUser > 6000) {
+            // Berhenti tanpa Anda menyentuh apa pun -> tunggu 8 detik (siapa tahu hanya jeda antar lagu)
+            stopAt = now
+            h.postDelayed({ softRecover() }, 8000)
+        }
+        wasPlaying = p
+        lastTitle = t
+        if (reload) reloadAndResume()
+    }
+
+    // Tahap 1: coba tekan Play saja. Tahap 2: kalau tetap diam -> muat ulang (Auto) atau tanya lewat notifikasi.
+    private fun softRecover() {
+        if (NowPlaying.playing || lastUser > stopAt) return
+        resume()
+        h.postDelayed({
+            if (!NowPlaying.playing && lastUser <= stopAt) {
+                if (auto && SystemClock.uptimeMillis() - lastLoad > 180_000) reloadAndResume()
+                else NowPlaying.alert(this)
+            }
+        }, 6000)
+    }
+
+    private fun reloadAndResume() {
+        h.removeCallbacksAndMessages(null)
+        NowPlaying.cancelAlert(this)
+        NowPlaying.playing = false
+        wasPlaying = false
+        resumeAfterLoad = true
+        lastLoad = SystemClock.uptimeMillis()
+        web.reload()
+    }
+
+    private fun tryResume(n: Int) {
+        if (!resumeAfterLoad || NowPlaying.playing || n > 15) { resumeAfterLoad = false; return }
+        resume()
+        h.postDelayed({ tryResume(n + 1) }, 2000)
+    }
+
+    // Klik Play hanya kalau tombolnya memang berlabel Play/Putar (tidak akan memaksa Pause)
+    private fun resume() = web.evaluateJavascript(
+        "(function(){var b=document.querySelector('[data-testid=\"control-button-playpause\"]');if(b&&/^(play|putar)/i.test(b.getAttribute('aria-label')||''))b.click();})()", null
+    )
+
     private val desktopUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
     inner class Bridge {
         @JavascriptInterface
         fun update(t: String, a: String, art: String, p: Boolean) {
-            runOnUiThread { NowPlaying.update(this@MainActivity, t, a, art, p) }
+            runOnUiThread { onState(t, a, art, p) }
         }
     }
 
@@ -91,9 +162,23 @@ class MainActivity : Activity() {
                 Toast.makeText(this@MainActivity, "Lebar halaman: ${widths[wi]}", Toast.LENGTH_SHORT).show()
             }
         }
+        val autoBtn = TextView(this).apply {
+            fun paint() { text = if (auto) "Auto: ON" else "Auto: OFF"; setTextColor(if (auto) GREEN else Color.GRAY) }
+            paint(); gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), 0)
+            setOnClickListener {
+                auto = !auto; paint()
+                Toast.makeText(
+                    this@MainActivity,
+                    if (auto) "Kalau musik berhenti: app otomatis muat ulang & putar lagi"
+                    else "Kalau musik berhenti: app bertanya lewat notifikasi",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
         val top = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(8), dp(10), dp(8))
             addView(search, LinearLayout.LayoutParams(0, dp(44), 1f))
+            addView(autoBtn, LinearLayout.LayoutParams(WRAP_CONTENT, dp(44)))
             addView(zoom, LinearLayout.LayoutParams(WRAP_CONTENT, dp(44)))
         }
 
@@ -198,16 +283,18 @@ class MainActivity : Activity() {
                 if (AdBlocker.shouldBlock(r.url)) AdBlocker.blocked() else null
 
             override fun onPageStarted(v: WebView, url: String, f: Bitmap?) { inject(v) }
-            override fun onPageFinished(v: WebView, url: String) { inject(v) }
+            override fun onPageFinished(v: WebView, url: String) { inject(v); if (resumeAfterLoad) tryResume(0) }
         }
 
         setContentView(buildUi())
 
         NowPlaying.command = { c ->
             runOnUiThread {
+                lastUser = SystemClock.uptimeMillis()
                 when (c) {
                     "next" -> click("control-button-skip-forward")
                     "prev" -> click("control-button-skip-back")
+                    "recover" -> reloadAndResume()
                     else -> click("control-button-playpause")
                 }
             }
@@ -215,6 +302,11 @@ class MainActivity : Activity() {
         NowPlaying.onChange = { refreshMini() }
 
         web.loadUrl("https://open.spotify.com")
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        lastUser = SystemClock.uptimeMillis()
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -228,6 +320,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        h.removeCallbacksAndMessages(null)
+        NowPlaying.cancelAlert(this)
         NowPlaying.release()
         stopService(Intent(this, PlaybackService::class.java))
         web.destroy()

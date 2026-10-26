@@ -13,7 +13,7 @@ function vp(){try{
 function q(s){return document.querySelector(s);}
 function tx(s){var e=q(s);return e?e.textContent:'';}
 var css='[data-testid*="adslot" i],[data-testid="leaderboard-ad"],iframe[src*="doubleclick"],iframe[src*="googlesyndication"],[aria-label="Advertisement" i]{display:none!important}';
-var wasAd=false,last='';
+var wasAd=false,last='',prev=new WeakMap(),stuck=0;
 setInterval(function(){
  try{
   vp();
@@ -30,6 +30,9 @@ setInterval(function(){
   var st=navigator.mediaSession?navigator.mediaSession.playbackState:'';
   var pp=q('[data-testid="control-button-playpause"]');
   var playing=st==='playing'?true:(st==='paused'?false:(pp?/pause|jeda/i.test(pp.getAttribute('aria-label')||''):false));
+  var els=document.querySelectorAll('audio,video'),adv=false;
+  els.forEach(function(e){if(prev.get(e)!==e.currentTime)adv=true;prev.set(e,e.currentTime);});
+  if(playing&&!ad&&els.length){stuck=adv?0:stuck+1;if(stuck>=24)playing=false;}else{stuck=0;}
   var key=title+'|'+artist+'|'+art+'|'+playing;
   if(key!==last&&window.SpotifyBridge){last=key;SpotifyBridge.update(title,artist,art,playing);}
  }catch(e){}

@@ -24,5 +24,6 @@
             android:name=".PlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <receiver android:name=".ActionReceiver" android:exported="false" />
     </application>
 </manifest>
