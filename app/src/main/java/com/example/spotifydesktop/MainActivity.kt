@@ -1,10 +1,22 @@
 package com.example.spotifydesktop
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.webkit.*
+
+/** WebView yang tidak pernah diberi tahu bahwa jendelanya tersembunyi, supaya audio tidak dijeda di latar belakang. */
+class BgWebView(c: Context) : WebView(c) {
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        if (visibility != View.GONE) super.onWindowVisibilityChanged(View.VISIBLE)
+    }
+}
 
 class MainActivity : Activity() {
     private lateinit var web: WebView
@@ -15,14 +27,19 @@ class MainActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        web = WebView(this)
+
+        if (Build.VERSION.SDK_INT >= 33)
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        startForegroundService(Intent(this, PlaybackService::class.java))
+
+        web = BgWebView(this)
         setContentView(web)
 
         with(web.settings) {
             javaScriptEnabled = true
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
-            userAgentString = desktopUA          // tampilan desktop
+            userAgentString = desktopUA
             useWideViewPort = true
             loadWithOverviewMode = true
             setSupportZoom(true)
@@ -36,7 +53,6 @@ class MainActivity : Activity() {
         }
 
         web.webChromeClient = object : WebChromeClient() {
-            // Izinkan DRM (Widevine) agar musik bisa diputar
             override fun onPermissionRequest(r: PermissionRequest) {
                 val ok = r.resources.filter { it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID }
                 if (ok.isNotEmpty()) r.grant(ok.toTypedArray()) else r.deny()
@@ -58,8 +74,21 @@ class MainActivity : Activity() {
         web.loadUrl("https://open.spotify.com")
     }
 
+    // Tombol "Keluar" di notifikasi menutup app sepenuhnya (dan menghentikan musik)
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent?.action == "QUIT") finishAndRemoveTask()
+    }
+
+    // Tombol back di halaman awal hanya memindahkan app ke latar belakang, musik tetap jalan
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (web.canGoBack()) web.goBack() else super.onBackPressed()
+        if (web.canGoBack()) web.goBack() else moveTaskToBack(true)
+    }
+
+    override fun onDestroy() {
+        stopService(Intent(this, PlaybackService::class.java))
+        web.destroy()
+        super.onDestroy()
     }
 }

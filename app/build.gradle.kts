@@ -7,10 +7,10 @@ android {
     compileSdk = 34
     defaultConfig {
         applicationId = "com.example.spotifydesktop"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
