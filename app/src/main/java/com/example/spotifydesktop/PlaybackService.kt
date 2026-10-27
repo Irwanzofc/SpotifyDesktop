@@ -1,7 +1,6 @@
 package com.example.spotifydesktop
 
 import android.app.*
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -22,6 +21,7 @@ object NowPlaying {
     var artist = ""
     var art: Bitmap? = null
     var playing = false
+    var wantPlay = false
     var command: ((String) -> Unit)? = null   // "playpause" | "next" | "prev"
     var onChange: (() -> Unit)? = null
     private var artUrl = ""
@@ -100,38 +100,6 @@ object NowPlaying {
         return b.build()
     }
 
-    /** Notifikasi: musik berhenti, tanya mau muat ulang & putar lagi atau tidak. */
-    fun alert(ctx: Context) {
-        val nm = ctx.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(
-            NotificationChannel("alert", "Musik berhenti", NotificationManager.IMPORTANCE_HIGH)
-        )
-        val pf = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        val open = PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java), pf)
-        val go = PendingIntent.getBroadcast(
-            ctx, 2, Intent(ctx, ActionReceiver::class.java).setAction("RECOVER"), pf
-        )
-        nm.notify(
-            2,
-            Notification.Builder(ctx, "alert")
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setContentTitle("Musik berhenti")
-                .setContentText("Muat ulang halaman dan putar lagi? (geser untuk abaikan)")
-                .setContentIntent(open)
-                .setAutoCancel(true)
-                .addAction(
-                    Notification.Action.Builder(
-                        Icon.createWithResource(ctx, android.R.drawable.ic_media_play), "Muat ulang & putar", go
-                    ).build()
-                )
-                .build()
-        )
-    }
-
-    fun cancelAlert(ctx: Context) {
-        ctx.getSystemService(NotificationManager::class.java).cancel(2)
-    }
-
     fun release() {
         session?.release(); session = null
         command = null; onChange = null
@@ -167,12 +135,5 @@ class PlaybackService : Service() {
         cpu?.release()
         wifi?.release()
         super.onDestroy()
-    }
-}
-
-/** Menerima ketukan tombol "Muat ulang & putar" dari notifikasi tanpa membuka aplikasi. */
-class ActionReceiver : BroadcastReceiver() {
-    override fun onReceive(c: Context, i: Intent) {
-        if (i.action == "RECOVER") NowPlaying.command?.invoke("recover")
     }
 }

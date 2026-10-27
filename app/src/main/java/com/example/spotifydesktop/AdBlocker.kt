@@ -14,7 +14,7 @@ object AdBlocker {
     )
 
     // Path iklan di domain spotify.com. Jika musik jadi berhenti/error, hapus path di sini.
-    private val spotifyAdPaths = emptyList<String>()
+    private val spotifyAdPaths = listOf("/ads/", "/ad-logic/", "/pagead/", "/ad-state-machine/")
 
     fun shouldBlock(u: Uri): Boolean {
         val host = u.host ?: return false
